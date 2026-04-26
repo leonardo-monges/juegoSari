@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; touch-action:none; }
+body { background:#1a0a2e; overflow:hidden; font-family:'Courier New',monospace; }
+canvas { display:block; }
+#ui { position:absolute; top:0; left:0; width:100%; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; pointer-events:none; }
+#score { color:#FFE0F0; font-size:14px; font-weight:bold; text-shadow:0 0 8px #ff80c0; background:rgba(0,0,0,0.3); padding:4px 10px; border-radius:20px; }
+#lives { color:#ff6b9d; font-size:18px; background:rgba(0,0,0,0.3); padding:4px 8px; border-radius:20px; }
+#overlay { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(10,0,30,0.88); }
+#overlay h1 { color:#FFE0F0; font-size:22px; margin-bottom:8px; text-align:center; text-shadow:0 0 12px #ff80c0; }
+#overlay p { color:#c0a0ff; font-size:13px; margin-bottom:20px; text-align:center; line-height:1.8; padding:0 24px; }
+.char { font-size:44px; margin-bottom:12px; }
+#startBtn { background:#7c3aed; color:white; border:none; padding:14px 38px; border-radius:30px; font-size:16px; font-family:'Courier New',monospace; cursor:pointer; font-weight:bold; box-shadow:0 0 20px #7c3aed88; }
+#startBtn:active { transform:scale(0.95); }
+#jumpBtn { position:absolute; bottom:24px; right:20px; width:72px; height:72px; background:rgba(124,58,237,0.85); border:3px solid #a78bfa; border-radius:50%; color:white; font-size:28px; display:none; align-items:center; justify-content:center; cursor:pointer; user-select:none; -webkit-user-select:none; }
+#jumpBtn:active { transform:scale(0.9); background:rgba(124,58,237,1); }
+#hint { position:absolute; bottom:110px; right:20px; color:#9070cc; font-size:11px; font-family:'Courier New',monospace; display:none; text-align:center; }
+#leftBtn, #rightBtn {
+  position:absolute; bottom:24px; width:72px; height:72px;
+  background:rgba(124,58,237,0.85); border:3px solid #a78bfa;
+  border-radius:50%; color:white; font-size:28px; display:none;
+  align-items:center; justify-content:center; cursor:pointer;
+  user-select:none; -webkit-user-select:none;
+}
+#leftBtn { left:20px; }
+#rightBtn { left:104px; }
+#leftBtn:active, #rightBtn:active { transform:scale(0.9); background:rgba(124,58,237,1); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="score">PUNTOS: 0</div>
+  <div id="lives">❤️❤️❤️</div>
+</div>
+<div id="jumpBtn">⬆</div>
+<div id="leftBtn">⬅</div>
+<div id="rightBtn">➡</div>
+<div id="hint">SALTAR</div>
+<div id="overlay">
+  <div class="char">👧</div>
+  <h1>¡Sarita Esquiva!</h1>
+  <p>Sarita va camino a la escuela 🎒<br><br>
+  ↔️ <b style="color:#ffe0f0">Deslizá</b> para moverse<br>
+  ⬆️ <b style="color:#ffe0f0">Botón</b> abajo a la derecha para saltar<br><br>
+  ¡Esquivá los gatos 🐱 y perritos 🐶!</p>
+  <button id="startBtn" onclick="startGame()">¡JUGAR!</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const jumpBtn = document.getElementById('jumpBtn');
+const hint = document.getElementById('hint');
+
+let W, H, groundY;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  groundY = H - Math.round(H * 0.13);
+}
+resize();
+window.addEventListener('resize', resize);
+
+let state = 'idle', score = 0, lives = 3, frame = 0;
+let obstacles = [], particles = [], bgOffset = 0;
+let speed = 3, spawnTimer = 0, spawnInterval = 88;
+
+const GRAVITY = 0.55, JUMP_FORCE = -13;
+let sarita = { x:0, y:0, targetX:0, vy:0, onGround:true, w:38, h:62, invincible:0, walkFrame:0 };
+
+function init() {
+  score=0; lives=3; frame=0; obstacles=[]; particles=[];
+  speed=3; spawnTimer=0; spawnInterval=88; bgOffset=0;
+  groundY = H - Math.round(H*0.13);
+  sarita.x = W*0.2; sarita.targetX = sarita.x;
+  sarita.y = groundY - sarita.h;
+  sarita.vy=0; sarita.onGround=true;
+  sarita.invincible=0; sarita.walkFrame=0;
+  updateUI();
+}
+
+function updateUI() {
+  scoreEl.textContent = 'PUNTOS: ' + score;
+  livesEl.textContent = '❤️'.repeat(lives) + '🖤'.repeat(Math.max(0,3-lives));
+}
+
+function jump() {
+  if (state==='playing' && sarita.onGround) {
+    sarita.vy = JUMP_FORCE;
+    sarita.onGround = false;
+  }
+}
+
+jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); jump(); }, {passive:false});
+jumpBtn.addEventListener('mousedown', jump);
+
+function drawSarita() {
+  const x = Math.round(sarita.x), y = Math.round(sarita.y);
+  const alpha = sarita.invincible>0 ? (Math.floor(frame/4)%2===0 ? 0.35:1) : 1;
+  ctx.globalAlpha = alpha;
+  ctx.save(); ctx.translate(x,y);
+  const wf = sarita.onGround ? Math.floor(sarita.walkFrame/8)%2 : 0;
+
+  ctx.fillStyle='rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(19,66,18,5,0,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle='#3b5998';
+  if(wf===0){ctx.fillRect(10,45,9,13);ctx.fillRect(20,45,9,13);}
+  else{ctx.fillRect(8,45,9,16);ctx.fillRect(22,45,9,10);}
+  ctx.fillStyle='#fff';
+  if(wf===0){ctx.fillRect(9,56,11,6);ctx.fillRect(19,56,11,6);}
+  else{ctx.fillRect(7,59,11,6);ctx.fillRect(21,53,11,6);}
+
+  ctx.fillStyle='#5a9e7c'; ctx.fillRect(7,26,24,23);
+  ctx.fillStyle='#d0ede0'; ctx.fillRect(9,26,20,5);
+  ctx.fillStyle='#3d7a5c'; ctx.fillRect(9,37,9,8);
+  ctx.fillStyle='#f0f0f0'; ctx.fillRect(2,28,7,13); ctx.fillRect(29,28,7,13);
+  ctx.fillStyle='#b87333'; ctx.fillRect(29,26,8,20);
+
+  ctx.fillStyle='#c8875a';
+  ctx.beginPath(); ctx.ellipse(19,16,13,14,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2c1a0e';
+  ctx.beginPath(); ctx.ellipse(19,8,13,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6,12,6,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(32,12,6,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle='#1e6b4a';
+  ctx.beginPath(); ctx.ellipse(9,4,6,4,-0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9,4,3,5,0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(29,4,6,4,0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(29,4,3,5,-0.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#145238';
+  ctx.beginPath(); ctx.arc(9,4,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(29,4,3,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle='#1a0a00';
+  ctx.beginPath(); ctx.arc(14,16,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(24,16,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(15,15,1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(25,15,1,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(220,100,80,0.3)';
+  ctx.beginPath(); ctx.ellipse(11,19,4,3,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(27,19,4,3,0,0,Math.PI*2); ctx.fill();
+
+  ctx.restore(); ctx.globalAlpha=1;
+}
+
+function drawCat(o) {
+  const x=Math.round(o.x), y=Math.round(o.y);
+  const wf=Math.floor(o.animFrame/6)%2;
+  ctx.save(); ctx.translate(x,y);
+
+  ctx.fillStyle='#e87020';
+  ctx.beginPath(); ctx.ellipse(20,25,18,13,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#c05010'; ctx.fillRect(13,17,4,14); ctx.fillRect(22,17,4,14);
+  ctx.fillStyle='#e87020';
+  ctx.beginPath(); ctx.ellipse(30,13,12,11,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(22,5); ctx.lineTo(18,-3); ctx.lineTo(27,3); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(36,5); ctx.lineTo(40,-3); ctx.lineTo(33,3); ctx.fill();
+  ctx.fillStyle='#ff9060';
+  ctx.beginPath(); ctx.moveTo(22,5); ctx.lineTo(19,0); ctx.lineTo(26,4); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(36,5); ctx.lineTo(39,0); ctx.lineTo(34,4); ctx.fill();
+  ctx.fillStyle='#ffcc80'; ctx.beginPath(); ctx.ellipse(30,15,8,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1000';
+  ctx.beginPath(); ctx.ellipse(27,12,2,2.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(33,12,2,2.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#80ff80';
+  ctx.beginPath(); ctx.ellipse(27,12,1,2,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(33,12,1,2,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ff6060'; ctx.beginPath(); ctx.arc(30,17,2,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#fff8'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(28,17); ctx.lineTo(18,15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(28,18); ctx.lineTo(18,21); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(32,17); ctx.lineTo(42,15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(32,18); ctx.lineTo(42,21); ctx.stroke();
+  ctx.strokeStyle='#e87020'; ctx.lineWidth=5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(4,25); ctx.quadraticCurveTo(-10,8,2,0); ctx.stroke();
+  ctx.fillStyle='#e87020';
+  if(wf===0){ctx.fillRect(8,33,8,10);ctx.fillRect(22,33,8,10);}
+  else{ctx.fillRect(6,33,8,13);ctx.fillRect(24,33,8,8);}
+  ctx.fillStyle='#ffaa70';
+  ctx.beginPath(); ctx.ellipse(11,43,5,3,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(25,43,5,3,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawDog(o) {
+  const x=Math.round(o.x), y=Math.round(o.y);
+  const wf=Math.floor(o.animFrame/6)%2;
+  ctx.save(); ctx.translate(x,y);
+
+  ctx.fillStyle='#f0f0f0'; ctx.beginPath(); ctx.ellipse(22,29,22,17,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.ellipse(16,25,14,12,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#e8e0d0'; ctx.beginPath(); ctx.roundRect(26,4,28,27,6); ctx.fill();
+  ctx.fillStyle='#1a1a1a';
+  ctx.beginPath(); ctx.moveTo(28,6); ctx.lineTo(22,-7); ctx.lineTo(36,4); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(50,6); ctx.lineTo(56,-7); ctx.lineTo(42,4); ctx.fill();
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.ellipse(36,15,8,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.ellipse(34,13,4,4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(44,13,4,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1000';
+  ctx.beginPath(); ctx.arc(35,13,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(45,13,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(36,12,1.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(46,12,1.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.ellipse(39,22,7,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#555';
+  ctx.beginPath(); ctx.arc(36,21,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(43,21,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#e88888'; ctx.beginPath(); ctx.ellipse(39,28,7,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(36,28,3,0,Math.PI); ctx.fill();
+  ctx.beginPath(); ctx.arc(43,28,3,0,Math.PI); ctx.fill();
+  ctx.strokeStyle='#c8b898'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(32,10); ctx.quadraticCurveTo(29,14,32,18); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(46,10); ctx.quadraticCurveTo(49,14,46,18); ctx.stroke();
+  ctx.fillStyle='#e8e0d0';
+  if(wf===0){ctx.fillRect(8,38,9,11);ctx.fillRect(22,38,9,11);}
+  else{ctx.fillRect(6,38,9,14);ctx.fillRect(24,38,9,8);}
+  ctx.fillStyle='#d8d0c0';
+  ctx.beginPath(); ctx.ellipse(12,49,6,4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(26,49,6,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.ellipse(4,30,5,4,0.5,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawBackground() {
+  ctx.fillStyle='#0d0520'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(26,10,62,0.8)'; ctx.fillRect(0,H*0.3,W,H*0.7);
+
+  ctx.fillStyle='rgba(255,240,255,0.7)';
+  [[0.08,0.04],[0.22,0.03],[0.4,0.06],[0.6,0.02],[0.78,0.05],[0.92,0.03],[0.5,0.10],[0.33,0.08],[0.7,0.09]].forEach(([sx,sy])=>{
+    ctx.beginPath(); ctx.arc(sx*W,sy*H,1.5,0,Math.PI*2); ctx.fill();
+  });
+
+  ctx.fillStyle='#1a0d35';
+  [[0,0.44,0.12],[0.1,0.38,0.09],[0.19,0.49,0.1],[0.29,0.37,0.09],[0.38,0.47,0.11],[0.49,0.34,0.1],[0.59,0.48,0.08],[0.67,0.41,0.11],[0.78,0.35,0.1],[0.88,0.45,0.12]].forEach(([bx,by,bw])=>{
+    ctx.fillRect(bx*W, by*H, bw*W, groundY - by*H);
+  });
+
+  bgOffset = (bgOffset + speed*0.6) % 70;
+  ctx.fillStyle='#b8a898'; ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.strokeStyle='#a09080'; ctx.lineWidth=1;
+  for(let px=-bgOffset; px<W; px+=70){
+    ctx.beginPath(); ctx.moveTo(px,groundY); ctx.lineTo(px,H); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(0,groundY+22); ctx.lineTo(W,groundY+22); ctx.stroke();
+  ctx.fillStyle='#5a4a3a'; ctx.fillRect(0,groundY-3,W,4);
+}
+
+function drawParticles() {
+  particles = particles.filter(p => p.life > 0);
+  for(const p of particles){
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.life--;
+    ctx.globalAlpha = p.life/p.maxLife;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<12;i++){
+    const a=(Math.PI*2*i)/12, spd=2+Math.random()*4;
+    particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-3,r:3+Math.random()*4,color,life:40,maxLife:40});
+  }
+}
+
+function spawnObstacle(){
+  const isCat=Math.random()<0.5;
+  const w=isCat?46:66, h=isCat?48:54;
+  obstacles.push({x:W+30,y:groundY-h,w,h,type:isCat?'cat':'dog',animFrame:0,speed:speed+Math.random()*2});
+}
+
+function checkCol(a,b){
+  const m=10;
+  return a.x+m<b.x+b.w-m && a.x+a.w-m>b.x+m && a.y+m<b.y+b.h && a.y+a.h>b.y+m;
+}
+
+function update(){
+  if(state!=='playing') return;
+  frame++; sarita.walkFrame++;
+if(leftHeld)  sarita.targetX = Math.max(0, sarita.x - 5);
+if(rightHeld) sarita.targetX = Math.min(W - sarita.w - 10, sarita.x + 5);
+  const dx=sarita.targetX-sarita.x;
+  sarita.x+=dx*0.13;
+  sarita.x=Math.max(0,Math.min(W-sarita.w-10,sarita.x));
+
+  sarita.vy+=GRAVITY;
+  sarita.y+=sarita.vy;
+  const floorY=groundY-sarita.h;
+  if(sarita.y>=floorY){ sarita.y=floorY; sarita.vy=0; sarita.onGround=true; }
+
+  spawnTimer++;
+  if(spawnTimer>=spawnInterval){
+    spawnObstacle(); spawnTimer=0;
+    spawnInterval=Math.max(42,spawnInterval-1.5);
+    speed=Math.min(10,speed+0.1);
+  }
+
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o=obstacles[i];
+    o.x-=o.speed; o.animFrame++;
+    if(o.x+o.w<-30){ obstacles.splice(i,1); score+=10; updateUI(); continue; }
+    if(sarita.invincible===0 && checkCol(sarita,o)){
+      lives--; sarita.invincible=90;
+      spawnParticles(sarita.x+19,sarita.y+30,'#ff6b9d');
+      obstacles.splice(i,1); updateUI();
+      if(lives<=0){ state='gameover'; showGameOver(); }
+    }
+  }
+
+  if(sarita.invincible>0) sarita.invincible--;
+  score++;
+  if(frame%60===0) updateUI();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+  for(const o of obstacles){ o.type==='cat'?drawCat(o):drawDog(o); }
+  drawSarita();
+  drawParticles();
+}
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+
+function startGame(){
+  overlay.style.display='none';
+  jumpBtn.style.display='flex';
+  leftBtn.style.display='flex';
+rightBtn.style.display='flex';
+  hint.style.display='block';
+  state='playing'; init();
+}
+
+function showGameOver(){
+  jumpBtn.style.display='none';
+  leftBtn.style.display='none';
+rightBtn.style.display='none';
+  hint.style.display='none';
+  overlay.innerHTML=`
+    <div class="char">😢</div>
+    <h1>¡Ay, Sarita!</h1>
+    <p>Llegaste hasta los<br><strong style="color:#ffe0f0;font-size:24px;display:block;margin:6px 0">${score} puntos</strong>¿Lo intentamos de nuevo?</p>
+    <button id="startBtn" onclick="startGame()">¡OTRA VEZ!</button>
+  `;
+  overlay.style.display='flex';
+}
+
+let touchStartX=0;
+canvas.addEventListener('touchstart',e=>{
+  touchStartX=e.touches[0].clientX;
+  sarita.targetX=e.touches[0].clientX-sarita.w/2;
+},{passive:true});
+canvas.addEventListener('touchmove',e=>{
+  sarita.targetX=e.touches[0].clientX-sarita.w/2;
+},{passive:true});
+canvas.addEventListener('mousemove',e=>{
+  if(state==='playing') sarita.targetX=e.clientX-sarita.w/2;
+});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp') jump();
+  if(e.code==='ArrowLeft')  sarita.targetX = Math.max(0, sarita.x - 60);
+  if(e.code==='ArrowRight') sarita.targetX = Math.min(W - sarita.w - 10, sarita.x + 60);
+});
+
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+let leftHeld = false, rightHeld = false;
+
+leftBtn.addEventListener('touchstart',  e=>{ e.preventDefault(); leftHeld=true;  },{passive:false});
+leftBtn.addEventListener('touchend',    e=>{ e.preventDefault(); leftHeld=false; },{passive:false});
+rightBtn.addEventListener('touchstart', e=>{ e.preventDefault(); rightHeld=true;  },{passive:false});
+rightBtn.addEventListener('touchend',   e=>{ e.preventDefault(); rightHeld=false; },{passive:false});
+leftBtn.addEventListener('mousedown',  ()=>leftHeld=true);
+leftBtn.addEventListener('mouseup',    ()=>leftHeld=false);
+rightBtn.addEventListener('mousedown', ()=>rightHeld=true);
+rightBtn.addEventListener('mouseup',   ()=>rightHeld=false);
+document.getElementById('startBtn').addEventListener('click',startGame);
+
+loop();
+</script>
+</body>
+</html>
